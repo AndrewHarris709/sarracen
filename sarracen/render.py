@@ -15,7 +15,8 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.colors import Colormap
 
-from sarracen.interpolate import interpolate_2d_cross, interpolate_2d, interpolate_3d, interpolate_3d_cross
+from sarracen.interpolate import interpolate_2d_cross, interpolate_2d, interpolate_3d, interpolate_3d_cross, \
+    interpolate_3d_vec, interpolate_3d_cross_vec
 from sarracen.kernels import BaseKernel
 
 
@@ -377,6 +378,77 @@ def render_3d(data: 'SarracenDataFrame',
     return fig, ax
 
 
+def render_3d_vec(data: 'SarracenDataFrame',
+                  target_x: str,
+                  target_y: str,
+                  target_z: str,
+                  x: str = None,
+                  y: str = None,
+                  z: str = None,
+                  kernel: BaseKernel = None,
+                  integral_samples: int = 1000,
+                  rotation: np.ndarray = None,
+                  origin: np.ndarray = None,
+                  x_pixels: int = None,
+                  y_pixels: int = None,
+                  x_min: float = None,
+                  x_max: float = None,
+                  y_min: float = None,
+                  y_max: float = None,
+                  plot_type: str = 'stream') -> ('Figure', 'Axes'):
+    # x & y columns default to the variables determined by the SarracenDataFrame.
+    if x is None:
+        x = data.xcol
+    if y is None:
+        y = data.ycol
+    if z is None:
+        z = data.zcol
+
+    # boundaries of the plot default to the maximum & minimum values of the data.
+    if x_min is None:
+        x_min = _snap(data.loc[:, x].min())
+    if y_min is None:
+        y_min = _snap(data.loc[:, y].min())
+    if x_max is None:
+        x_max = _snap(data.loc[:, x].max())
+    if y_max is None:
+        y_max = _snap(data.loc[:, y].max())
+
+    # set # of pixels to maintain an aspect ratio that is the same as the underlying bounds of the data.
+    if x_pixels is None and y_pixels is None:
+        x_pixels = 40
+    if x_pixels is None:
+        x_pixels = int(np.rint(y_pixels * ((x_max - x_min) / (y_max - y_min))))
+    if y_pixels is None:
+        y_pixels = int(np.rint(x_pixels * ((y_max - y_min) / (x_max - x_min))))
+
+    if kernel is None:
+        kernel = data.kernel
+
+    img = interpolate_3d_vec(data, target_x, target_y, target_z, x, y, z, kernel, integral_samples, rotation, origin, x_pixels, y_pixels, x_min,
+                         x_max, y_min, y_max)
+
+    # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
+    fig, ax = plt.subplots(figsize=(6.4, 6.4 * ((y_max - y_min) / (x_max - x_min))))
+    if plot_type == 'stream':
+        ax.streamplot(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1], color='black')
+    elif plot_type == 'arrow':
+        ax.quiver(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1], angles='uv', color='black', pivot='mid')
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    # remove the x & y ticks if the data is rotated, since these no longer have physical
+    # relevance to the displayed data.
+    if rotation is not None:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.set_xlabel(x)
+        ax.set_ylabel(y)
+
+    return fig, ax
+
+
 def render_3d_cross(data: 'SarracenDataFrame',
                     target: str,
                     z_slice: float = None,
@@ -513,5 +585,151 @@ def render_3d_cross(data: 'SarracenDataFrame',
 
     cbar = fig.colorbar(graphic, ax=ax)
     cbar.ax.set_ylabel(f"{target}")
+
+    return fig, ax
+
+
+def render_3d_cross_vec(data: 'SarracenDataFrame',
+                        target_x: str,
+                        target_y: str,
+                        target_z: str,
+                        z_slice: float = None,
+                        x: str = None,
+                        y: str = None,
+                        z: str = None,
+                        kernel: BaseKernel = None,
+                        rotation: np.ndarray = None,
+                        origin: np.ndarray = None,
+                        x_pixels: int = None,
+                        y_pixels: int = None,
+                        x_min: float = None,
+                        x_max: float = None,
+                        y_min: float = None,
+                        y_max: float = None,
+                        plot_type: str = 'stream') -> tuple['Figure', 'Axes']:
+    """ Render 3D particle data to a 2D grid, using a 3D cross-section.
+
+    Render the data within a SarracenDataFrame to a 2D matplotlib object, using a 3D -> 2D
+    cross-section of the target variable. The cross-section is taken of the 3D data at a specific
+    value of z, and the contributions of particles near the plane are interpolated to a 2D grid.
+
+    Parameters
+    ----------
+    data : SarracenDataFrame
+        Particle data, in a SarracenDataFrame.
+    target: str
+        Column label of the target smoothing data.
+    z_slice: float, optional
+        Z-axis value to take the cross-section at. Defaults to the average z position in `data`.
+    x: str, optional
+        Column label of the x-directional axis. Defaults to the x-column detected in `data`.
+    y: str, optional
+        Column label of the y-directional axis. Defaults to the y-column detected in `data`.
+    z: str
+        Column label of the z-directional axis. Defaults to the z-column detected in `data`.
+    kernel: BaseKernel, optional
+        Kernel to use for smoothing the target data. Defaults to the kernel specified in `data`.
+    rotation: array_like, optional
+        Defines the rotation in degrees to apply to the data before interpolation. The
+        order of rotations is [z, y, x].
+    origin: array_like, optional
+        Point of rotation of the data, in [x, y, z] form. Defaults to the centre
+        point of the bounds of the data.
+    x_pixels: int, optional
+        Number of pixels in the output image in the x-direction. If both x_pixels and y_pixels are
+        None, this defaults to 256. Otherwise, this value defaults to a multiple of y_pixels which
+        preserves the aspect ratio of the data.
+    y_pixels: int, optional
+        Number of pixels in the output image in the y-direction. If both x_pixels and y_pixels are
+        None, this defaults to 256. Otherwise, this value defaults to a multiple of x_pixels which
+        preserves the aspect ratio of the data.
+    x_min: float, optional
+        Minimum bound in the x-direction (in particle data space). Defaults to the lower bound
+        of x detected in `data` snapped to the nearest integer.
+    x_max: float, optional
+        Maximum bound in the x-direction (in particle data space). Defaults to the upper bound
+        of x detected in `data` snapped to the nearest integer.
+    y_min: float, optional
+        Minimum bound in the y-direction (in particle data space). Defaults to the lower bound
+        of y detected in `data` snapped to the nearest integer.
+    y_max: float, optional
+        Maximum bound in the y-direction (in particle data space). Defaults to the upper bound
+        of y detected in `data` snapped to the nearest integer.
+    colormap: str or Colormap, optional
+        The color map to use when plotting this data.
+
+    Returns
+    -------
+    Figure
+        The resulting matplotlib figure, containing the 3d-cross section and
+        a color bar indicating the magnitude of the target variable.
+    Axes
+        The resulting matplotlib axes, which contains the 3d-cross section image.
+
+    Raises
+    -------
+    ValueError
+        If `pixwidthx`, `pixwidthy`, `pixcountx`, or `pixcounty` are less than or equal to zero, or
+        if the specified `x` and `y` minimum and maximums result in an invalid region, or
+        if the provided data is not 3-dimensional.
+    KeyError
+        If `target`, `x`, `y`, mass, density, or smoothing length columns do not
+        exist in `data`.
+    """
+    # x & y columns default to the variables determined by the SarracenDataFrame.
+    if x is None:
+        x = data.xcol
+    if y is None:
+        y = data.ycol
+    if z is None:
+        z = data.zcol
+
+    # boundaries of the plot default to the maximum & minimum values of the data.
+    if x_min is None:
+        x_min = _snap(data.loc[:, x].min())
+    if y_min is None:
+        y_min = _snap(data.loc[:, y].min())
+    if x_max is None:
+        x_max = _snap(data.loc[:, x].max())
+    if y_max is None:
+        y_max = _snap(data.loc[:, y].max())
+
+    # set default slice to be through the data's average z-value.
+    if z_slice is None:
+        z_slice = _snap(data.loc[:, z].mean())
+
+    if kernel is None:
+        kernel = data.kernel
+
+    # set # of pixels to maintain an aspect ratio that is the same as the underlying bounds of the data.
+    if x_pixels is None and y_pixels is None:
+        x_pixels = 512
+    if x_pixels is None:
+        x_pixels = int(np.rint(y_pixels * ((x_max - x_min) / (y_max - y_min))))
+    if y_pixels is None:
+        y_pixels = int(np.rint(x_pixels * ((y_max - y_min) / (x_max - x_min))))
+
+    img = interpolate_3d_cross_vec(data, target_x, target_y, target_z, z_slice, x, y, z, kernel, rotation, origin,
+                                   x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+
+    # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
+    fig, ax = plt.subplots(figsize=(6.4, 6.4 * ((y_max - y_min) / (x_max - x_min))))
+    if plot_type == 'stream':
+        ax.streamplot(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1],
+                      color='black')
+    elif plot_type == 'arrow':
+        ax.quiver(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1], angles='uv',
+                  color='black', pivot='mid')
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    # remove the x & y ticks if the data is rotated, since these no longer have physical
+    # relevance to the displayed data.
+    if rotation is not None:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.set_xlabel(x)
+        ax.set_ylabel(y)
 
     return fig, ax

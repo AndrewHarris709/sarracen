@@ -361,7 +361,7 @@ def interpolate_3d(data: 'SarracenDataFrame',
     if z not in data.columns:
         raise KeyError(f"z-directional column '{z}' does not exist in the provided dataset.")
     if target not in data.columns:
-        raise KeyError(f"Target column '{target}' does not exist in provided dataset.")
+        raise KeyError(f"Target column '{target}' does not exist in the provided dataset.")
     if data.mcol is None:
         raise KeyError("Mass column does not exist in the provided dataset, please create it with "
                        "sdf.create_mass_column().")
@@ -401,6 +401,95 @@ def interpolate_3d(data: 'SarracenDataFrame',
     return _fast_3d(data[target].to_numpy(), x_data, y_data, data['m'].to_numpy(),
                     data['rho'].to_numpy(), data['h'].to_numpy(), kernel.get_column_kernel(integral_samples),
                     kernel.get_radius(), integral_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+
+
+def interpolate_3d_vec(data: 'SarracenDataFrame',
+                       target_x: str,
+                       target_y: str,
+                       target_z: str,
+                       x: str,
+                       y: str,
+                       z: str,
+                       kernel: BaseKernel,
+                       integral_samples: int = 1000,
+                       rotation: np.ndarray = None,
+                       origin: np.ndarray = None,
+                       x_pixels: int = 20,
+                       y_pixels: int = 20,
+                       x_min: float = 0,
+                       x_max: float = 1,
+                       y_min: float = 0,
+                       y_max: float = 1):
+    if x not in data.columns:
+        raise KeyError(f"x-directional column '{x}' does not exist in the provided dataset.")
+    if y not in data.columns:
+        raise KeyError(f"y-directional column '{y}' does not exist in the provided dataset.")
+    if z not in data.columns:
+        raise KeyError(f"z-directional column '{z}' does not exist in the provided dataset.")
+    if target_x not in data.columns:
+        raise KeyError(f"Target column '{target_x}' does not exist in the provided dataset.")
+    if target_y not in data.columns:
+        raise KeyError(f"Target column '{target_y}' does not exist in the provided dataset.")
+    if target_z not in data.columns:
+        raise KeyError(f"Target column '{target_z}' does not exist in the provided dataset.")
+    if data.mcol is None:
+        raise KeyError("Mass column does not exist in the provided dataset, please create it with "
+                       "sdf.create_mass_column().")
+    if data.rhocol is None:
+        raise KeyError("Density column does not exist in the provided dataset, please create it with"
+                       "sdf.derive_density().")
+    if data.hcol is None:
+        raise KeyError("Smoothing length column does not exist in the provided dataset.")
+
+    if data.get_dim() != 3:
+        raise ValueError(f"Dataset is not 3-dimensional.")
+    if x_max - x_min <= 0:
+        raise ValueError("`x_max` must be greater than `x_min`!")
+    if y_max - y_min <= 0:
+        raise ValueError("`y_max` must be greater than `y_min`!")
+    if x_pixels <= 0:
+        raise ValueError("`x_pixels` must be greater than zero!")
+    if y_pixels <= 0:
+        raise ValueError("`y_pixels` must be greater than zero!")
+
+    x_data = data[x].to_numpy()
+    y_data = data[y].to_numpy()
+    if rotation is not None:
+        rotation *= np.array([-1, 1, -1])
+        rot = R.from_euler('zyx', rotation, degrees=True)
+        vectors = data[[x, y, z]].to_numpy()
+        if origin is None:
+            origin = (vectors[:, 0].min() + vectors[:, 0].max()) / 2
+
+        vectors = vectors - origin
+        vectors = rot.apply(vectors)
+        vectors = vectors + origin
+
+        x_data = vectors[:, 0]
+        y_data = vectors[:, 1]
+
+    target_x_data = data[target_x].to_numpy()
+    target_y_data = data[target_y].to_numpy()
+    if rotation is not None:
+        rotation *= np.array([-1, 1, -1])
+        rot = R.from_euler('zyx', rotation, degrees=True)
+        vectors = data[[target_x, target_y, target_z]].to_numpy()
+        if origin is None:
+            origin = (vectors[:, 0].min() + vectors[:, 0].max()) / 2
+
+        vectors = vectors - origin
+        vectors = rot.apply(vectors)
+        vectors = vectors + origin
+
+        target_x_data = vectors[:, 0]
+        target_y_data = vectors[:, 1]
+
+    return (_fast_3d(target_x_data, x_data, y_data, data['m'].to_numpy(),
+                     data['rho'].to_numpy(), data['h'].to_numpy(), kernel.get_column_kernel(integral_samples),
+                     kernel.get_radius(), integral_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max),
+            _fast_3d(target_y_data, x_data, y_data, data['m'].to_numpy(),
+                     data['rho'].to_numpy(), data['h'].to_numpy(), kernel.get_column_kernel(integral_samples),
+                     kernel.get_radius(), integral_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max))
 
 
 # Underlying numba-compiled code for 3D column interpolation.
@@ -561,6 +650,154 @@ def interpolate_3d_cross(data: 'SarracenDataFrame',
     return _fast_3d_cross(data[target].to_numpy(), z_slice, x_data, y_data, z_data,
                           data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(), kernel.w,
                           kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+
+
+def interpolate_3d_cross_vec(data: 'SarracenDataFrame',
+                             target_x: str,
+                             target_y: str,
+                             target_z: str,
+                             z_slice: float,
+                             x: str,
+                             y: str,
+                             z: str,
+                             kernel: BaseKernel,
+                             rotation: np.ndarray = None,
+                             origin: np.ndarray = None,
+                             x_pixels: int = 512,
+                             y_pixels: int = 512,
+                             x_min: float = 0,
+                             x_max: float = 1,
+                             y_min: float = 0,
+                             y_max: float = 1):
+    """ Interpolate 3D particle data to a 2D grid, using a 3D cross-section.
+
+    Interpolates particle data in a SarracenDataFrame across three directional axes to a 2D
+    grid of pixels. A cross-section is taken of the 3D data at a specific value of z, and
+    the contributions of particles near the plane are interpolated to a 2D grid.
+
+    Parameters
+    ----------
+    data : SarracenDataFrame
+        The particle data to interpolate over.
+    target: str
+        The column label of the target smoothing data.
+    z_slice: float
+        The z-axis value to take the cross-section at.
+    x: str
+        The column label of the x-directional axis.
+    y: str
+        The column label of the y-directional axis.
+    z: str
+        The column label of the z-directional axis.
+    kernel: BaseKernel
+        The kernel to use for smoothing the target data.
+    rotation: array_like, optional
+        Defines the rotation in degrees to apply to the data before interpolation. The
+        order of rotations is [z, y, x].
+    origin: array_like, optional
+        Point of rotation of the data, in [x, y, z] form. Defaults to the centre
+        point of the bounds of the data.
+    x_pixels: int, optional
+        Number of pixels in the output image in the x-direction.
+    y_pixels: int, optional
+        Number of pixels in the output image in the y-direction.
+    x_min: float, optional
+        Minimum bound in the x-direction (in particle data space).
+    x_max: float, optional
+        Maximum bound in the x-direction (in particle data space).
+    y_min: float, optional
+        Minimum bound in the y-direction (in particle data space).
+    y_max: float, optional
+        Maximum bound in the y-direction (in particle data space).
+
+    Returns
+    -------
+    ndarray
+        The interpolated output image, in a 2-dimensional numpy array. Dimensions are
+        structured in reverse order, where (x, y) -> [y][x]
+
+    Raises
+    -------
+    ValueError
+        If `pixwidthx`, `pixwidthy`, `pixcountx`, or `pixcounty` are less than or equal to zero, or
+        if the specified `x` and `y` minimum and maximums result in an invalid region, or
+        if the provided data is not 3-dimensional.
+    KeyError
+        If `target`, `x`, `y`, mass, density, or smoothing length columns do not
+        exist in `data`.
+    """
+    if x not in data.columns:
+        raise KeyError(f"x-directional column '{x}' does not exist in the provided dataset.")
+    if y not in data.columns:
+        raise KeyError(f"x-directional column '{y}' does not exist in the provided dataset.")
+    if z not in data.columns:
+        raise KeyError(f"z-directional column '{z}' does not exist in the provided dataset.")
+    if target_x not in data.columns:
+        raise KeyError(f"Target column '{target_x}' does not exist in provided dataset.")
+    if target_y not in data.columns:
+        raise KeyError(f"Target column '{target_y}' does not exist in provided dataset.")
+    if target_z not in data.columns:
+        raise KeyError(f"Target column '{target_z}' does not exist in provided dataset.")
+    if data.mcol is None:
+        raise KeyError("Mass column does not exist in the provided dataset, please create it with "
+                       "sdf.create_mass_column().")
+    if data.rhocol is None:
+        raise KeyError("Density column does not exist in the provided dataset, please create it with"
+                       "sdf.derive_density().")
+    if data.hcol is None:
+        raise KeyError("Smoothing length column does not exist in the provided dataset.")
+
+    if data.get_dim() != 3:
+        raise ValueError(f"Dataset is not 3-dimensional.")
+    if x_max - x_min <= 0:
+        raise ValueError("`x_max` must be greater than `x_min`!")
+    if y_max - y_min <= 0:
+        raise ValueError("`y_max` must be greater than `y_min`!")
+    if x_pixels <= 0:
+        raise ValueError("`x_pixels` must be greater than zero!")
+    if y_pixels <= 0:
+        raise ValueError("`y_pixels` must be greater than zero!")
+
+    x_data = data[x].to_numpy()
+    y_data = data[y].to_numpy()
+    z_data = data[z].to_numpy()
+    if rotation is not None:
+        rotation *= np.array([-1, 1, -1])
+        rot = R.from_euler('zyx', rotation, degrees=True)
+        vectors = data[[x, y, z]].to_numpy()
+        if origin is None:
+            origin = (vectors[:, 0].min() + vectors[:, 0].max()) / 2
+
+        vectors = vectors - origin
+        vectors = rot.apply(vectors)
+        vectors = vectors + origin
+
+        x_data = vectors[:, 0]
+        y_data = vectors[:, 1]
+        z_data = vectors[:, 2]
+
+    target_x_data = data[target_x].to_numpy()
+    target_y_data = data[target_y].to_numpy()
+    if rotation is not None:
+        rotation *= np.array([-1, 1, -1])
+        rot = R.from_euler('zyx', rotation, degrees=True)
+        vectors = data[[target_x, target_y, target_z]].to_numpy()
+        if origin is None:
+            origin = (vectors[:, 0].min() + vectors[:, 0].max()) / 2
+
+        vectors = vectors - origin
+        vectors = rot.apply(vectors)
+        vectors = vectors + origin
+
+        target_x_data = vectors[:, 0]
+        target_y_data = vectors[:, 1]
+
+    return (_fast_3d_cross(target_x_data, z_slice, x_data, y_data, z_data,
+                           data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(), kernel.w,
+                           kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max),
+            _fast_3d_cross(target_y_data, z_slice, x_data, y_data, z_data,
+                           data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(), kernel.w,
+                           kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max))
 
 
 # Underlying numba-compiled code for 3D->2D cross-sections
