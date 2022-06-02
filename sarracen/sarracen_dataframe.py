@@ -5,7 +5,7 @@ from pandas import DataFrame, Series
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from sarracen.render import render_2d, render_2d_cross, render_3d, render_3d_cross
+from sarracen.render import render_2d, render_2d_cross, render_3d, render_3d_cross, render_3d_vec, render_3d_cross_vec
 from sarracen.kernels import CubicSplineKernel, BaseKernel
 
 
@@ -156,9 +156,10 @@ class SarracenDataFrame(DataFrame):
                   x_max: float = None,
                   y_min: float = None,
                   y_max: float = None,
-                  colormap: Union[str, Colormap] = 'RdBu') -> ('Figure', 'Axes'):
+                  colormap: Union[str, Colormap] = 'RdBu',
+                  ax: 'Axes' = None) -> 'Axes':
 
-        return render_2d(self, target, x, y, kernel, x_pixels, y_pixels, x_min, x_max, y_min, y_max, colormap)
+        return render_2d(self, target, x, y, kernel, x_pixels, y_pixels, x_min, x_max, y_min, y_max, colormap, ax)
 
     @_copy_doc(render_2d_cross)
     def render_2d_cross(self,
@@ -170,9 +171,10 @@ class SarracenDataFrame(DataFrame):
                         x1: float = None,
                         y1: float = None,
                         x2: float = None,
-                        y2: float = None) -> ('Figure', 'Axes'):
+                        y2: float = None,
+                        ax: 'Axes' = None) -> 'Axes':
 
-        return render_2d_cross(self, target, x, y, kernel, pixels, x1, x2, y1, y2)
+        return render_2d_cross(self, target, x, y, kernel, pixels, x1, x2, y1, y2, ax)
 
     @_copy_doc(render_3d)
     def render_3d(self,
@@ -190,10 +192,35 @@ class SarracenDataFrame(DataFrame):
                   x_max: float = None,
                   y_min: float = None,
                   y_max: float = None,
-                  colormap: Union[str, Colormap] = 'RdBu') -> ('Figure', 'Axes'):
+                  colormap: Union[str, Colormap] = 'RdBu',
+                  ax: 'Axes' = None) -> 'Axes':
 
-        return render_3d(self, target, x, y, z, kernel, int_samples, rotation, origin, x_pixels, y_pixels, x_min, x_max, y_min, y_max,
-                         colormap)
+        return render_3d(self, target, x, y, z, kernel, int_samples, rotation, origin, x_pixels, y_pixels, x_min, x_max,
+                         y_min, y_max, colormap, ax)
+
+    @_copy_doc(render_3d_vec)
+    def render_3d_vec(self,
+                  target_x: str,
+                  target_y: str,
+                  target_z: str,
+                  x: str = None,
+                  y: str = None,
+                  z: str = None,
+                  kernel: BaseKernel = None,
+                  int_samples: int = 1000,
+                  rotation: np.ndarray = None,
+                  origin: np.ndarray = None,
+                  x_pixels: int = None,
+                  y_pixels: int = None,
+                  x_min: float = None,
+                  x_max: float = None,
+                  y_min: float = None,
+                  y_max: float = None,
+                  plot_type: str = 'stream',
+                  ax: 'Axes' = None) -> 'Axes':
+
+        return render_3d_vec(self, target_x, target_y, target_z, x, y, z, kernel, int_samples, rotation, origin,
+                             x_pixels, y_pixels, x_min, x_max, y_min, y_max, plot_type, ax)
 
     @_copy_doc(render_3d_cross)
     def render_3d_cross(self,
@@ -211,10 +238,35 @@ class SarracenDataFrame(DataFrame):
                         x_max: float = None,
                         y_min: float = None,
                         y_max: float = None,
-                        colormap: Union[str, Colormap] = 'RdBu') -> ('Figure', 'Axes'):
+                        colormap: Union[str, Colormap] = 'RdBu',
+                        ax: 'Axes' = None) -> 'Axes':
 
         return render_3d_cross(self, target, z_slice, x, y, z, kernel, rotation, origin, x_pixels, y_pixels, x_min,
-                               x_max, y_min, y_max, colormap)
+                               x_max, y_min, y_max, colormap, ax)
+
+    @_copy_doc(render_3d_cross_vec)
+    def render_3d_cross_vec(self,
+                        target_x: str,
+                        target_y: str,
+                        target_z: str,
+                        z_slice: float = None,
+                        x: str = None,
+                        y: str = None,
+                        z: str = None,
+                        kernel: BaseKernel = None,
+                        rotation: np.ndarray = None,
+                        origin: np.ndarray = None,
+                        x_pixels: int = None,
+                        y_pixels: int = None,
+                        x_min: float = None,
+                        x_max: float = None,
+                        y_min: float = None,
+                        y_max: float = None,
+                        plot_type: str = 'stream',
+                        ax: 'Axes' = None) -> 'Axes':
+
+        return render_3d_cross_vec(self, target_x, target_y, target_z, z_slice, x, y, z, kernel, rotation, origin,
+                                   x_pixels, y_pixels, x_min, x_max, y_min, y_max, plot_type, ax)
 
     @property
     def params(self):

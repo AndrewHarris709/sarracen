@@ -454,6 +454,9 @@ def interpolate_3d_vec(data: 'SarracenDataFrame',
 
     x_data = data[x].to_numpy()
     y_data = data[y].to_numpy()
+    target_x_data = data[target_x].to_numpy()
+    target_y_data = data[target_y].to_numpy()
+
     if rotation is not None:
         rotation *= np.array([-1, 1, -1])
         rot = R.from_euler('zyx', rotation, degrees=True)
@@ -468,11 +471,6 @@ def interpolate_3d_vec(data: 'SarracenDataFrame',
         x_data = vectors[:, 0]
         y_data = vectors[:, 1]
 
-    target_x_data = data[target_x].to_numpy()
-    target_y_data = data[target_y].to_numpy()
-    if rotation is not None:
-        rotation *= np.array([-1, 1, -1])
-        rot = R.from_euler('zyx', rotation, degrees=True)
         vectors = data[[target_x, target_y, target_z]].to_numpy()
         if origin is None:
             origin = (vectors[:, 0].min() + vectors[:, 0].max()) / 2
@@ -496,7 +494,6 @@ def interpolate_3d_vec(data: 'SarracenDataFrame',
 @njit(parallel=True, fastmath=True)
 def _fast_3d(target, x_data, y_data, mass_data, rho_data, h_data, integrated_kernel, kernel_rad, int_samples, x_pixels,
              y_pixels, x_min, x_max, y_min, y_max):
-    image = np.zeros((y_pixels, x_pixels))
     pixwidthx = (x_max - x_min) / x_pixels
     pixwidthy = (y_max - y_min) / y_pixels
 
@@ -508,6 +505,7 @@ def _fast_3d(target, x_data, y_data, mass_data, rho_data, h_data, integrated_ker
     ipixmax = np.rint((x_data + kernel_rad * h_data - x_min) / pixwidthx).clip(a_min=0, a_max=x_pixels)
     jpixmax = np.rint((y_data + kernel_rad * h_data - y_min) / pixwidthy).clip(a_min=0, a_max=y_pixels)
 
+    image = np.zeros((y_pixels, x_pixels))
     # iterate through the indexes of non-filtered particles
     for i in prange(len(term)):
         # precalculate differences in the x-direction (optimization)
@@ -761,6 +759,8 @@ def interpolate_3d_cross_vec(data: 'SarracenDataFrame',
     x_data = data[x].to_numpy()
     y_data = data[y].to_numpy()
     z_data = data[z].to_numpy()
+    target_x_data = data[target_x].to_numpy()
+    target_y_data = data[target_y].to_numpy()
     if rotation is not None:
         rotation *= np.array([-1, 1, -1])
         rot = R.from_euler('zyx', rotation, degrees=True)
@@ -776,11 +776,6 @@ def interpolate_3d_cross_vec(data: 'SarracenDataFrame',
         y_data = vectors[:, 1]
         z_data = vectors[:, 2]
 
-    target_x_data = data[target_x].to_numpy()
-    target_y_data = data[target_y].to_numpy()
-    if rotation is not None:
-        rotation *= np.array([-1, 1, -1])
-        rot = R.from_euler('zyx', rotation, degrees=True)
         vectors = data[[target_x, target_y, target_z]].to_numpy()
         if origin is None:
             origin = (vectors[:, 0].min() + vectors[:, 0].max()) / 2

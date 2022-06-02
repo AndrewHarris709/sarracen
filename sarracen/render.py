@@ -13,6 +13,7 @@ from typing import Union
 import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 
 from sarracen.interpolate import interpolate_2d_cross, interpolate_2d, interpolate_3d, interpolate_3d_cross, \
@@ -52,7 +53,8 @@ def render_2d(data: 'SarracenDataFrame',
               x_max: float = None,
               y_min: float = None,
               y_max: float = None,
-              colormap: Union[str, Colormap] = 'RdBu') -> ('Figure', 'Axes'):
+              colormap: Union[str, Colormap] = 'RdBu',
+              ax: Axes = None) -> Axes:
     """ Render 2D particle data to a 2D grid, using SPH rendering of a target variable.
 
     Render the data within a SarracenDataFrame to a 2D matplotlib object, by rendering the values
@@ -138,17 +140,19 @@ def render_2d(data: 'SarracenDataFrame',
     if kernel is None:
         kernel = data.kernel
 
+    if ax is None:
+        ax = plt.gca()
+
     image = interpolate_2d(data, target, x, y, kernel, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
 
     # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
-    fig, ax = plt.subplots(figsize=(6.4, 4.8 * ((y_max - y_min) / (x_max - x_min))))
     img = ax.imshow(image, cmap=colormap, origin='lower', extent=[x_min, x_max, y_min, y_max])
     ax.set_xlabel(x)
     ax.set_ylabel(y)
-    cbar = fig.colorbar(img, ax=ax)
+    cbar = plt.colorbar(img, ax=ax)
     cbar.ax.set_ylabel(target)
 
-    return fig, ax
+    return ax
 
 
 def render_2d_cross(data: 'SarracenDataFrame',
@@ -160,7 +164,8 @@ def render_2d_cross(data: 'SarracenDataFrame',
                     x1: float = None,
                     x2: float = None,
                     y1: float = None,
-                    y2: float = None) -> ('Figure', 'Axes'):
+                    y2: float = None,
+                    ax: Axes = None) -> Axes:
     """ Render 2D particle data to a 1D line, using a 2D cross-section.
 
     Render the data within a SarracenDataFrame to a seaborn-generated line plot, by taking
@@ -231,15 +236,17 @@ def render_2d_cross(data: 'SarracenDataFrame',
     if kernel is None:
         kernel = data.kernel
 
+    if ax is None:
+        ax = plt.gca()
+
     output = interpolate_2d_cross(data, target, x, y, kernel, pixels, x1, x2, y1, y2)
 
-    fig, ax = plt.subplots()
     ax.margins(x=0, y=0)
     sns.lineplot(x=np.linspace(0, np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2), pixels), y=output, ax=ax)
     ax.set_xlabel(f'cross-section ({x}, {y})')
     ax.set_ylabel(target)
 
-    return fig, ax
+    return ax
 
 
 def render_3d(data: 'SarracenDataFrame',
@@ -257,7 +264,8 @@ def render_3d(data: 'SarracenDataFrame',
               x_max: float = None,
               y_min: float = None,
               y_max: float = None,
-              colormap: Union[str, Colormap] = 'RdBu') -> ('Figure', 'Axes'):
+              colormap: Union[str, Colormap] = 'RdBu',
+              ax: Axes = None) -> Axes:
     """ Render 3D particle data to a 2D grid, using SPH column rendering of a target variable.
 
     Render the data within a SarracenDataFrame to a 2D matplotlib object, by rendering the values
@@ -356,11 +364,12 @@ def render_3d(data: 'SarracenDataFrame',
     if kernel is None:
         kernel = data.kernel
 
+    if ax is None:
+        ax = plt.gca()
+
     img = interpolate_3d(data, target, x, y, z, kernel, integral_samples, rotation, origin, x_pixels, y_pixels, x_min,
                          x_max, y_min, y_max)
 
-    # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
-    fig, ax = plt.subplots(figsize=(6.4, 4.8 * ((y_max - y_min) / (x_max - x_min))))
     graphic = ax.imshow(img, cmap=colormap, origin='lower', extent=[x_min, x_max, y_min, y_max])
 
     # remove the x & y ticks if the data is rotated, since these no longer have physical
@@ -372,10 +381,10 @@ def render_3d(data: 'SarracenDataFrame',
         ax.set_xlabel(x)
         ax.set_ylabel(y)
 
-    cbar = fig.colorbar(graphic, ax=ax)
+    cbar = plt.colorbar(graphic, ax=ax)
     cbar.ax.set_ylabel(f"column {target}")
 
-    return fig, ax
+    return ax
 
 
 def render_3d_vec(data: 'SarracenDataFrame',
@@ -395,7 +404,8 @@ def render_3d_vec(data: 'SarracenDataFrame',
                   x_max: float = None,
                   y_min: float = None,
                   y_max: float = None,
-                  plot_type: str = 'stream') -> ('Figure', 'Axes'):
+                  plot_type: str = 'stream',
+                  ax: Axes = None) -> Axes:
     # x & y columns default to the variables determined by the SarracenDataFrame.
     if x is None:
         x = data.xcol
@@ -425,11 +435,12 @@ def render_3d_vec(data: 'SarracenDataFrame',
     if kernel is None:
         kernel = data.kernel
 
+    if ax is None:
+        ax = plt.gca()
+
     img = interpolate_3d_vec(data, target_x, target_y, target_z, x, y, z, kernel, integral_samples, rotation, origin, x_pixels, y_pixels, x_min,
                          x_max, y_min, y_max)
 
-    # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
-    fig, ax = plt.subplots(figsize=(6.4, 6.4 * ((y_max - y_min) / (x_max - x_min))))
     if plot_type == 'stream':
         ax.streamplot(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1], color='black')
     elif plot_type == 'arrow':
@@ -446,7 +457,7 @@ def render_3d_vec(data: 'SarracenDataFrame',
         ax.set_xlabel(x)
         ax.set_ylabel(y)
 
-    return fig, ax
+    return ax
 
 
 def render_3d_cross(data: 'SarracenDataFrame',
@@ -464,7 +475,8 @@ def render_3d_cross(data: 'SarracenDataFrame',
                     x_max: float = None,
                     y_min: float = None,
                     y_max: float = None,
-                    colormap: Union[str, Colormap] = 'RdBu') -> tuple['Figure', 'Axes']:
+                    colormap: Union[str, Colormap] = 'RdBu',
+                    ax: Axes = None) -> Axes:
     """ Render 3D particle data to a 2D grid, using a 3D cross-section.
 
     Render the data within a SarracenDataFrame to a 2D matplotlib object, using a 3D -> 2D
@@ -567,11 +579,13 @@ def render_3d_cross(data: 'SarracenDataFrame',
     if y_pixels is None:
         y_pixels = int(np.rint(x_pixels * ((y_max - y_min) / (x_max - x_min))))
 
+    if ax is None:
+        ax = plt.gca()
+
     img = interpolate_3d_cross(data, target, z_slice, x, y, z, kernel, rotation, origin, x_pixels, y_pixels, x_min,
                                x_max, y_min, y_max)
 
     # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
-    fig, ax = plt.subplots(figsize=(6.4, 4.8 * ((y_max - y_min) / (x_max - x_min))))
     graphic = ax.imshow(img, cmap=colormap, origin='lower', extent=[x_min, x_max, y_min, y_max])
 
     # remove the x & y ticks if the data is rotated, since these no longer have physical
@@ -583,10 +597,10 @@ def render_3d_cross(data: 'SarracenDataFrame',
         ax.set_xlabel(x)
         ax.set_ylabel(y)
 
-    cbar = fig.colorbar(graphic, ax=ax)
+    cbar = plt.colorbar(graphic, ax=ax)
     cbar.ax.set_ylabel(f"{target}")
 
-    return fig, ax
+    return ax
 
 
 def render_3d_cross_vec(data: 'SarracenDataFrame',
@@ -606,7 +620,8 @@ def render_3d_cross_vec(data: 'SarracenDataFrame',
                         x_max: float = None,
                         y_min: float = None,
                         y_max: float = None,
-                        plot_type: str = 'stream') -> tuple['Figure', 'Axes']:
+                        plot_type: str = 'stream',
+                        ax: Axes = None) -> Axes:
     """ Render 3D particle data to a 2D grid, using a 3D cross-section.
 
     Render the data within a SarracenDataFrame to a 2D matplotlib object, using a 3D -> 2D
@@ -709,11 +724,12 @@ def render_3d_cross_vec(data: 'SarracenDataFrame',
     if y_pixels is None:
         y_pixels = int(np.rint(x_pixels * ((y_max - y_min) / (x_max - x_min))))
 
+    if ax is None:
+        ax = plt.gca()
+
     img = interpolate_3d_cross_vec(data, target_x, target_y, target_z, z_slice, x, y, z, kernel, rotation, origin,
                                    x_pixels, y_pixels, x_min, x_max, y_min, y_max)
 
-    # ensure the plot size maintains the aspect ratio of the underlying bounds of the data
-    fig, ax = plt.subplots(figsize=(6.4, 6.4 * ((y_max - y_min) / (x_max - x_min))))
     if plot_type == 'stream':
         ax.streamplot(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1],
                       color='black')
@@ -732,4 +748,4 @@ def render_3d_cross_vec(data: 'SarracenDataFrame',
         ax.set_xlabel(x)
         ax.set_ylabel(y)
 
-    return fig, ax
+    return ax
