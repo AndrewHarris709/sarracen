@@ -3,8 +3,12 @@ Contains several interpolation functions which produce interpolated 2D or 1D arr
 """
 import numpy as np
 from numba import prange, njit
+from numba.core import cgutils
+from numba.core.extending import intrinsic
+from numba.np.arrayobj import make_array, normalize_indices, basic_indexing
 from scipy.spatial.transform import Rotation as R
 
+from sarracen._atomic_operations import atomic_add
 from sarracen.kernels import BaseKernel
 
 
@@ -398,7 +402,7 @@ def interpolate_3d(data: 'SarracenDataFrame',
         x_data = vectors[:, 0]
         y_data = vectors[:, 1]
 
-    return _fast_3d(data[target].to_numpy(), x_data, y_data, data['m'].to_numpy(),
+    return _fast_3d_2(data[target].to_numpy(), x_data, y_data, data['m'].to_numpy(),
                     data['rho'].to_numpy(), data['h'].to_numpy(), kernel.get_column_kernel(integral_samples),
                     kernel.get_radius(), integral_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
 
@@ -523,6 +527,43 @@ def _fast_3d(target, x_data, y_data, mass_data, rho_data, h_data, integrated_ker
 
         # add contributions to image
         image[int(jpixmin[i]):int(jpixmax[i]), int(ipixmin[i]):int(ipixmax[i])] += (wab * term[i])
+
+    return image
+
+
+@njit(parallel=True)
+def _fast_3d_2(target, x_data, y_data, mass_data, rho_data, h_data, integrated_kernel, kernel_rad, int_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max):
+    pixwidthx = (x_max - x_min) / x_pixels
+    pixwidthy = (y_max - y_min) / y_pixels
+
+    term = target * mass_data / (rho_data * h_data ** 2)
+
+    # determine maximum and minimum pixels that each particle contributes to
+    ipixmin = np.rint((x_data - kernel_rad * h_data - x_min) / pixwidthx).clip(a_min=0, a_max=x_pixels)
+    jpixmin = np.rint((y_data - kernel_rad * h_data - y_min) / pixwidthy).clip(a_min=0, a_max=y_pixels)
+    ipixmax = np.rint((x_data + kernel_rad * h_data - x_min) / pixwidthx).clip(a_min=0, a_max=x_pixels)
+    jpixmax = np.rint((y_data + kernel_rad * h_data - y_min) / pixwidthy).clip(a_min=0, a_max=y_pixels)
+
+    image = np.zeros((y_pixels, x_pixels))
+    # iterate through the indexes of non-filtered particles
+    for i in prange(len(term)):
+        # precalculate differences in the x-direction (optimization)
+        dx2i = ((x_min + (np.arange(int(ipixmin[i]), int(ipixmax[i])) + 0.5) * pixwidthx - x_data[i]) ** 2) \
+               * (1 / (h_data[i] ** 2))
+
+        # determine differences in the y-direction
+        ypix = y_min + (np.arange(int(jpixmin[i]), int(jpixmax[i])) + 0.5) * pixwidthy
+        dy = ypix - y_data[i]
+        dy2 = dy * dy * (1 / (h_data[i] ** 2))
+
+        # calculate contributions at pixels i, j due to particle at x, y
+        q2 = dx2i + dy2.reshape(len(dy2), 1)
+        wab = np.interp(np.sqrt(q2), np.linspace(0, kernel_rad, int_samples), integrated_kernel)
+
+        for jpix in prange(int(jpixmax[i]) - int(jpixmin[i])):
+            for ipix in prange(int(ipixmax[i]) - int(ipixmin[i])):
+                if q2[jpix][ipix] < kernel_rad * 2:
+                    atomic_add(image, (jpix + int(jpixmin[i]), ipix + int(ipixmin[i])), term[i] * wab[jpix][ipix])
 
     return image
 
