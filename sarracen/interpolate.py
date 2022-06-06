@@ -1,8 +1,10 @@
 """
 Contains several interpolation functions which produce interpolated 2D or 1D arrays of SPH data.
 """
+import math
+
 import numpy as np
-from numba import prange, njit
+from numba import prange, njit, cuda
 
 from sarracen.kernels import BaseKernel
 
@@ -368,48 +370,82 @@ def interpolate_3d(data: 'SarracenDataFrame',
     if y_pixels <= 0:
         raise ValueError("`y_pixels` must be greater than zero!")
 
-    return _fast_3d(data[target].to_numpy(), data[x].to_numpy(), data[y].to_numpy(), data['m'].to_numpy(),
-                    data['rho'].to_numpy(), data['h'].to_numpy(), kernel.get_column_kernel(integral_samples),
-                    kernel.get_radius(), integral_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+    threadsperblock = 32
+    blockspergrid = (len(data) + (threadsperblock - 1)) // threadsperblock
 
+    # transfer relevant data to the GPU
+    d_target = cuda.to_device(data[target].to_numpy())
+    d_x = cuda.to_device(data[x].to_numpy())
+    d_y = cuda.to_device(data[y].to_numpy())
+    d_m = cuda.to_device(data['m'].to_numpy())
+    d_rho = cuda.to_device(data['rho'].to_numpy())
+    d_h = cuda.to_device(data['h'].to_numpy())
+    d_column_kernel = cuda.to_device(kernel.get_column_kernel(integral_samples))
+    d_image = cuda.to_device(np.zeros((y_pixels, x_pixels)))
 
+    _fast_3d[blockspergrid, threadsperblock](d_target, d_x, d_y, d_m, d_rho, d_h, d_column_kernel,
+                    kernel.get_radius(), integral_samples, x_pixels, y_pixels, x_min, x_max, y_min, y_max, d_image)
+
+    return d_image.copy_to_host()
+
+@cuda.jit
 # Underlying numba-compiled code for 3D column interpolation.
-@njit(parallel=True, fastmath=True)
 def _fast_3d(target, x_data, y_data, mass_data, rho_data, h_data, integrated_kernel, kernel_rad, int_samples, x_pixels,
-             y_pixels, x_min, x_max, y_min, y_max):
-    image = np.zeros((y_pixels, x_pixels))
+             y_pixels, x_min, x_max, y_min, y_max, image):
     pixwidthx = (x_max - x_min) / x_pixels
     pixwidthy = (y_max - y_min) / y_pixels
 
-    term = target * mass_data / (rho_data * h_data ** 2)
+    # each cuda thread calculates the contributions of 1 particle to the grid.
+    i = cuda.grid(1)
+    if i < len(target):
+        # determine maximum and minimum pixels that this particle contributes to
+        ipixmin = round((x_data[i] - kernel_rad * h_data[i] - x_min) / pixwidthx)
+        jpixmin = round((y_data[i] - kernel_rad * h_data[i] - y_min) / pixwidthy)
+        ipixmax = round((x_data[i] + kernel_rad * h_data[i] - x_min) / pixwidthx)
+        jpixmax = round((y_data[i] + kernel_rad * h_data[i] - y_min) / pixwidthy)
 
-    # determine maximum and minimum pixels that each particle contributes to
-    ipixmin = np.rint((x_data - kernel_rad * h_data - x_min) / pixwidthx).clip(a_min=0, a_max=x_pixels)
-    jpixmin = np.rint((y_data - kernel_rad * h_data - y_min) / pixwidthy).clip(a_min=0, a_max=y_pixels)
-    ipixmax = np.rint((x_data + kernel_rad * h_data - x_min) / pixwidthx).clip(a_min=0, a_max=x_pixels)
-    jpixmax = np.rint((y_data + kernel_rad * h_data - y_min) / pixwidthy).clip(a_min=0, a_max=y_pixels)
+        if ipixmin > x_pixels or jpixmin > y_pixels or ipixmax < 0 or jpixmax < 0:
+            return
 
-    sample_space = np.linspace(0, kernel_rad, int_samples)
+        term = target[i] * mass_data[i] / (rho_data[i] * h_data[i] ** 2)
 
-    # iterate through the indexes of non-filtered particles
-    for i in prange(len(term)):
-        # precalculate differences in the x-direction (optimization)
-        dx2i = ((x_min + (np.arange(int(ipixmin[i]), int(ipixmax[i])) + 0.5) * pixwidthx - x_data[i]) ** 2) \
-               * (1 / (h_data[i] ** 2))
+        if ipixmin < 0:
+            ipixmin = 0
+        if jpixmin < 0:
+            jpixmin = 0
+        if ipixmax > x_pixels:
+            ipixmax = x_pixels
+        if jpixmax > y_pixels:
+            jpixmax = y_pixels
 
-        # determine differences in the y-direction
-        ypix = y_min + (np.arange(int(jpixmin[i]), int(jpixmax[i])) + 0.5) * pixwidthy
-        dy = ypix - y_data[i]
-        dy2 = dy * dy * (1 / (h_data[i] ** 2))
+        # calculate contributions to all nearby pixels
+        for jpix in range(jpixmax - jpixmin):
+            for ipix in range(ipixmax - ipixmin):
+                # determine difference in the x-direction
+                xpix = x_min + ((ipix + ipixmin) + 0.5) * pixwidthx
+                dx = xpix - x_data[i]
+                dx2 = dx * dx * (1 / (h_data[i] ** 2))
 
-        # calculate contributions at pixels i, j due to particle at x, y
-        q2 = dx2i + dy2.reshape(len(dy2), 1)
-        wab = np.interp(np.sqrt(q2), sample_space, integrated_kernel)
+                # determine difference in the y-direction
+                ypix = y_min + ((jpix + jpixmin) + 0.5) * pixwidthy
+                dy = ypix - y_data[i]
+                dy2 = dy * dy * (1 / (h_data[i] ** 2))
 
-        # add contributions to image
-        image[int(jpixmin[i]):int(jpixmax[i]), int(ipixmin[i]):int(ipixmax[i])] += (wab * term[i])
+                # calculate contributions at pixels i, j due to particle at x, y
+                q = math.sqrt(dx2 + dy2)
 
-    return image
+                # add contribution to image
+                if q < kernel_rad:
+                    # since np.interp cannot be used in CUDA kernels, the interpolation must
+                    # be done by hand.
+                    wab_index = q * (int_samples - 1) / kernel_rad
+                    index = int(math.floor(wab_index))
+                    index1 = int(math.ceil(wab_index))
+                    t = wab_index - index
+                    wab = integrated_kernel[index] * (1 - t) + integrated_kernel[index1] * t
+
+                    # atomic add protects the summation against race conditions.
+                    cuda.atomic.add(image, (jpix + jpixmin, ipix + ipixmin), term * wab)
 
 
 def interpolate_3d_cross(data: 'SarracenDataFrame',
