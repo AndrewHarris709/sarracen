@@ -438,6 +438,38 @@ def interpolate_3d(data: 'SarracenDataFrame', target: str, x: str = None, y: str
                     kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max, 2, backend)
 
 
+def interpolate_3d_vec(data: 'SarracenDataFrame', target_x: str, target_y: str, target_z: str, x: str = None,
+                       y: str = None, kernel: BaseKernel = None, integral_samples: int = 1000,
+                       rotation: np.ndarray = None, origin: np.ndarray = None, x_pixels: int = None,
+                       y_pixels: int = None, x_min: float = None, x_max: float = None, y_min: float = None,
+                       y_max: float = 1, backend: str = None):
+    x, y = _default_xy(data, x, y)
+    _verify_columns(data, x, y, target_x)
+    _verify_columns(data, x, y, target_y)
+    _verify_columns(data, x, y, target_z)
+
+    x_min, x_max, y_min, y_max = _snap_boundaries(data, x, y, x_min, x_max, y_min, y_max)
+    x_pixels, y_pixels = _set_pixels(x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+    _check_boundaries(x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+
+    x_data, y_data, _ = _rotate_data(data, x, y, data.zcol, rotation, origin)
+    if target_z not in data.columns:
+        raise KeyError(f"z-directional target column '{target_z}' does not exist in the provided dataset.")
+    target_x_data, target_y_data, _ = _rotate_data(data, target_x, target_y, target_z, rotation, origin)
+
+    kernel = kernel if kernel is not None else data.kernel
+    backend = backend if backend is not None else data.backend
+    _check_dimension(data, 3)
+
+    weight_function = kernel.get_column_kernel_func(integral_samples)
+    return _fast_2d(data[target_x].to_numpy(), 0, x_data, y_data, np.zeros(len(data)), data['m'].to_numpy(),
+                    data['rho'].to_numpy(), data['h'].to_numpy(), weight_function,
+                    kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max, 2, backend),\
+           _fast_2d(data[target_y].to_numpy(), 0, x_data, y_data, np.zeros(len(data)), data['m'].to_numpy(),
+                    data['rho'].to_numpy(), data['h'].to_numpy(), weight_function,
+                    kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max, 2, backend)
+
+
 def interpolate_3d_cross(data: 'SarracenDataFrame', target: str, z_slice: float = None, x: str = None, y: str = None,
                          z: str = None, kernel: BaseKernel = None, rotation: np.ndarray = None,
                          origin: np.ndarray = None, x_pixels: int = None, y_pixels: int = None, x_min: float = None,

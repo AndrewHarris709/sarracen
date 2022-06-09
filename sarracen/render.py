@@ -16,7 +16,8 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 
-from sarracen.interpolate import interpolate_2d_cross, interpolate_2d, interpolate_3d, interpolate_3d_cross
+from sarracen.interpolate import interpolate_2d_cross, interpolate_2d, interpolate_3d, interpolate_3d_cross, \
+    interpolate_3d_vec
 from sarracen.kernels import BaseKernel
 
 
@@ -92,6 +93,32 @@ def _default_bounds(data, x, y, x_min, x_max, y_min, y_max):
         y_max = _snap(data.loc[:, y].max())
 
     return x_min, x_max, y_min, y_max
+
+
+def _set_pixels(x_pixels, y_pixels, x_min, x_max, y_min, y_max):
+    """Utility function to determine the number of pixels to interpolate over in 2D interpolation.
+
+    Parameters
+    ----------
+    x_pixels, y_pixels: int
+        The number of pixels in the x & y directions passed to the interpolation function.
+    x_min, x_max, y_min, y_max: float
+        The minimum and maximum values to use in interpolation, in particle data space.
+
+    Returns
+    -------
+    x_pixels, y_pixels
+        The number of pixels in the x & y directions to use in 2D interpolation.
+    """
+    # set # of pixels to maintain an aspect ratio that is the same as the underlying bounds of the data.
+    if x_pixels is None and y_pixels is None:
+        x_pixels = 512
+    if x_pixels is None:
+        x_pixels = int(np.rint(y_pixels * ((x_max - x_min) / (y_max - y_min))))
+    if y_pixels is None:
+        y_pixels = int(np.rint(x_pixels * ((y_max - y_min) / (x_max - x_min))))
+
+    return x_pixels, y_pixels
 
 
 def render_2d(data: 'SarracenDataFrame', target: str, x: str = None, y: str = None, kernel: BaseKernel = None,
@@ -322,6 +349,44 @@ def render_3d(data: 'SarracenDataFrame', target: str, x: str = None, y: str = No
     if cbar:
         colorbar = ax.figure.colorbar(graphic, cbar_ax, ax, **cbar_kws)
         colorbar.ax.set_ylabel(f"column {target}")
+
+    return ax
+
+
+def render_3d_vec(data: 'SarracenDataFrame', target_x: str, target_y: str, target_z: str, x: str = None, y: str = None,
+                  kernel: BaseKernel = None, integral_samples: int = 1000, rotation: np.ndarray = None,
+                  origin: np.ndarray = None, x_pixels: int = None, y_pixels: int = None, x_min: float = None,
+                  x_max: float = None, y_min: float = None, y_max: float = None, plot_type: str = 'stream',
+                  ax: Axes = None, backend: str = None, **kwargs) -> Axes:
+    img = interpolate_3d_vec(data, target_x, target_y, target_z, x, y, kernel, integral_samples, rotation, origin,
+                             x_pixels, y_pixels, x_min, x_max, y_min, y_max, backend)
+
+    if ax is None:
+        ax = plt.gca()
+
+    x, y = _default_axes(data, x, y)
+    x_min, x_max, y_min, y_max = _default_bounds(data, x, y, x_min, x_max, y_min, y_max)
+    x_pixels, y_pixels = _set_pixels(x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+
+    kwargs.setdefault("color", 'black')
+    if plot_type == 'stream':
+        ax.streamplot(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1],
+                      **kwargs)
+    elif plot_type == 'arrow':
+        kwargs.setdefault("angles", 'uv')
+        kwargs.setdefault("pivot", 'mid')
+        ax.quiver(np.linspace(x_min, x_max, x_pixels), np.linspace(y_min, y_max, y_pixels), img[0], img[1], **kwargs)
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    # remove the x & y ticks if the data is rotated, since these no longer have physical
+    # relevance to the displayed data.
+    if rotation is not None:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.set_xlabel(x)
+        ax.set_ylabel(y)
 
     return ax
 
