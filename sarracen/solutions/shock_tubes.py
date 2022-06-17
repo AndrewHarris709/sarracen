@@ -22,8 +22,13 @@ def exact_shock(time, gamma, x_shock, left_rho, right_rho, left_pressure, right_
         right_sound_speed = right_sound_speed * np.sqrt(1 / (1 + dust_gas_ratio))
     gamma_factor = (gamma - 1) / (gamma + 1)
 
-    post_pressure, post_velocity = get_pstar(gamma, left_pressure, right_pressure, left_velocity, right_velocity,
-                                             left_sound_speed, right_sound_speed)
+    isothermal = gamma <= 1
+    if isothermal:
+        post_pressure, post_velocity = get_pstar_isothermal(left_sound_speed, left_velocity, right_velocity, left_rho,
+                                                            right_rho)
+    else:
+        post_pressure, post_velocity = get_pstar(gamma, left_pressure, right_pressure, left_velocity, right_velocity,
+                                                 left_sound_speed, right_sound_speed)
 
     left_is_shock = post_pressure > left_pressure
     right_is_shock = post_pressure > right_pressure
@@ -69,8 +74,12 @@ def exact_shock(time, gamma, x_shock, left_rho, right_rho, left_pressure, right_
                          / (1 + gamma_factor * post_pressure / left_pressure)
         velocity[index] = post_velocity
     else:
-        density[index] = left_rho * (gamma_factor * (x_zero - x_plot[index])
-                                     / (left_sound_speed * time) + (1 - gamma_factor)) ** (2 / (gamma - 1))
+        if isothermal:
+            density[index] = left_rho * np.exp((x_left_going - x_plot[index]) / (left_sound_speed * time) +
+                                               left_velocity / left_sound_speed)
+        else:
+            density[index] = left_rho * (gamma_factor * (x_zero - x_plot[index])
+                                         / (left_sound_speed * time) + (1 - gamma_factor)) ** (2 / (gamma - 1))
         pressure[index] = left_pressure * (density[index] / left_rho) ** gamma
         velocity[index] = (1 - gamma_factor) * (left_sound_speed - (x_zero - x_plot[index]) / time) \
                           + gamma_factor * left_velocity
@@ -97,16 +106,29 @@ def exact_shock(time, gamma, x_shock, left_rho, right_rho, left_pressure, right_
 
     index = (x_plot >= x_right) & (x_plot < x_right_going)
     if left_is_shock:
-        density[index] = right_rho * (gamma_factor * (x_plot[index] - x_zero) / (right_sound_speed * time) - gamma_factor * right_velocity / right_sound_speed + (1 - gamma_factor)) ** (2 / (gamma - 1))
+        if isothermal:
+            density[index] = right_rho * np.exp(-(x_right_going - x_plot[index]) / (right_sound_speed * time)
+                                                - right_velocity / right_sound_speed)
+        else:
+            density[index] = right_rho * (gamma_factor * (x_plot[index] - x_zero)
+                                          / (right_sound_speed * time) - gamma_factor * right_velocity
+                                          / right_sound_speed + (1 - gamma_factor)) ** (2 / (gamma - 1))
+
     pressure[index] = right_pressure * (density[index] / right_rho) ** gamma
-    velocity[index] = (1 - gamma_factor) * (-right_sound_speed - (x_zero - x_plot[index]) / time) + gamma_factor * right_velocity
+    velocity[index] = (1 - gamma_factor) * (-right_sound_speed - (x_zero - x_plot[index]) / time) + gamma_factor\
+                      * right_velocity
 
     # undisturbed medium to the right
     pressure[x_plot >= x_right_going] = right_pressure
     density[x_plot >= x_right_going] = right_rho
     velocity[x_plot >= x_right_going] = right_velocity
 
-    df = pd.DataFrame({'x': x_plot, 'P': pressure, 'rho': density, 'v': velocity, 'u': pressure / ((gamma - 1) * density)})
+    if isothermal:
+        u = pressure / density
+    else:
+        u = pressure / ((gamma - 1) * density)
+
+    df = pd.DataFrame({'x': x_plot, 'P': pressure, 'rho': density, 'v': velocity, 'u': u})
     return SarracenDataFrame(df, params=dict())
 
 
@@ -134,6 +156,17 @@ def get_pstar(gamma, left_pressure, right_pressure, left_velocity, right_velocit
         new_pressure = pressure + pressure_change
 
     return new_pressure, left_velocity - left_function
+
+
+def get_pstar_isothermal(sound_speed, left_velocity, right_velocity, left_rho, right_rho):
+    X = np.sqrt(left_rho) * np.sqrt(right_rho) / np.sqrt(left_rho) + np.sqrt(right_rho)
+    velocity_difference = left_velocity - right_velocity
+    determinant = (X * velocity_difference) ** 2 + 4 * sound_speed ** 2 * X * (np.sqrt(left_rho) + np.sqrt(right_rho))
+
+    pstar = 0.25 * (X * velocity_difference + np.sqrt(determinant)) ** 2
+    vstar = left_velocity - (pstar - sound_speed * left_rho) / (np.sqrt(pstar * left_rho))
+
+    return pstar, vstar
 
 
 def pressure_function(pressure_star, pressure, sound_speed, gamma):
