@@ -62,28 +62,49 @@ def exact_shock(time, gamma, x_shock, left_rho, right_rho, left_pressure, right_
     density[x_plot <= x_left_going] = left_rho
     velocity[x_plot <= x_left_going] = left_velocity
 
-    # inside expansion fan
-    density[(x_plot > x_left_going) & (x_plot < x_left)] = \
-        left_rho * (gamma_factor * (x_zero - x_plot[(x_plot > x_left_going) & (x_plot < x_left)]) / (left_sound_speed * time) + (1 - gamma_factor))\
-        ** (2 / (gamma - 1))
-    pressure[(x_plot > x_left_going) & (x_plot < x_left)] = left_pressure * (density[(x_plot > x_left_going) & (x_plot < x_left)] / left_rho) ** gamma
-    velocity[(x_plot > x_left_going) & (x_plot < x_left)] = \
-        (1 - gamma_factor) * (left_sound_speed - (x_zero - x_plot[(x_plot > x_left_going) & (x_plot < x_left)]) / time) + gamma_factor * left_velocity
+    index = (x_plot > x_left_going) & (x_plot < x_left)
+    if left_is_shock:
+        pressure[index] = post_pressure
+        density[index] = left_rho * (gamma_factor + post_pressure / left_pressure) \
+                         / (1 + gamma_factor * post_pressure / left_pressure)
+        velocity[index] = post_velocity
+    else:
+        density[index] = left_rho * (gamma_factor * (x_zero - x_plot[index])
+                                     / (left_sound_speed * time) + (1 - gamma_factor)) ** (2 / (gamma - 1))
+        pressure[index] = left_pressure * (density[index] / left_rho) ** gamma
+        velocity[index] = (1 - gamma_factor) * (left_sound_speed - (x_zero - x_plot[index]) / time) \
+                          + gamma_factor * left_velocity
 
     # between expansion fan and contact discontinuity
-    pressure[(x_plot >= x_left) & (x_plot < x_contact)] = post_pressure
-    density[(x_plot >= x_left) & (x_plot < x_contact)] = left_rho * (post_pressure / left_pressure) ** (1 / gamma)
-    velocity[(x_plot >= x_left) & (x_plot < x_contact)] = post_velocity
+    index = (x_plot >= x_left) & (x_plot < x_contact)
+    pressure[index] = post_pressure
+    if left_is_shock:
+        density[index] = left_rho * (gamma_factor + post_pressure / left_pressure) \
+                         / (1 + gamma_factor * post_pressure / left_pressure)
+    else:
+        density[index] = left_rho * (post_pressure / left_pressure) ** (1 / gamma)
+    velocity[index] = post_velocity
 
     # post-shock, ahead of contact discontinuity
-    pressure[(x_plot >= x_contact) & (x_plot < x_right)] = post_pressure
-    density[(x_plot >= x_contact) & (x_plot < x_right)] = right_rho * (gamma_factor + post_pressure / right_pressure) / (1 + gamma_factor * post_pressure / right_pressure)
-    velocity[(x_plot >= x_contact) & (x_plot < x_right)] = post_velocity
+    index = (x_plot >= x_contact) & (x_plot < x_right)
+    pressure[index] = post_pressure
+    if left_is_shock:
+        density[index] = right_rho * (post_pressure / right_pressure) ** (1 / gamma)
+    else:
+        density[index] = right_rho * (gamma_factor + post_pressure / right_pressure) \
+                         / (1 + gamma_factor * post_pressure / right_pressure)
+    velocity[index] = post_velocity
+
+    index = (x_plot >= x_right) & (x_plot < x_right_going)
+    if left_is_shock:
+        density[index] = right_rho * (gamma_factor * (x_plot[index] - x_zero) / (right_sound_speed * time) - gamma_factor * right_velocity / right_sound_speed + (1 - gamma_factor)) ** (2 / (gamma - 1))
+    pressure[index] = right_pressure * (density[index] / right_rho) ** gamma
+    velocity[index] = (1 - gamma_factor) * (-right_sound_speed - (x_zero - x_plot[index]) / time) + gamma_factor * right_velocity
 
     # undisturbed medium to the right
-    pressure[x_plot >= x_right] = right_pressure
-    density[x_plot >= x_right] = right_rho
-    velocity[x_plot >= x_right] = right_velocity
+    pressure[x_plot >= x_right_going] = right_pressure
+    density[x_plot >= x_right_going] = right_rho
+    velocity[x_plot >= x_right_going] = right_velocity
 
     df = pd.DataFrame({'x': x_plot, 'P': pressure, 'rho': density, 'v': velocity, 'u': pressure / ((gamma - 1) * density)})
     return SarracenDataFrame(df, params=dict())
