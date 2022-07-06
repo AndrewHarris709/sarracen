@@ -7,7 +7,8 @@ import numpy as np
 from numba import prange, njit, cuda
 from scipy.spatial.transform import Rotation
 
-from sarracen.kernels import BaseKernel
+from sarracen.kernels import BaseKernel, CubicSplineKernel
+from sarracen.kernels.cubic_spline_exact import pint
 
 
 def _snap(value: float):
@@ -325,9 +326,9 @@ def interpolate_2d(data: 'SarracenDataFrame', target: str, x: str = None, y: str
     backend = backend if backend is not None else data.backend
     _check_dimension(data, 2)
 
-    return _fast_2d(data[target].to_numpy(), 0, data[x].to_numpy(), data[y].to_numpy(), np.zeros(len(data)),
-                    data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(), kernel.w,
-                    kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max, 2, backend)
+    return _fast_2d_interpolate_exact(data[target].to_numpy(), data[x].to_numpy(), data[y].to_numpy(),
+                                      data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(),
+                                      CubicSplineKernel.w, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
 
 
 def interpolate_2d_vec(data: 'SarracenDataFrame', target_x: str, target_y: str, x: str = None, y: str = None,
@@ -873,6 +874,124 @@ def _fast_2d_cpu(target, z_slice, x_data, y_data, z_data, mass_data, rho_data, h
                     continue
                 wab = weight_function(np.sqrt(q2[jpix][ipix]), n_dims)
                 image[jpix + jpixmin, ipix + ipixmin] += term[i] * wab
+
+    return image
+
+
+# Underlying CPU numba-compiled code for interpolation to a 2D grid. Used in interpolation of 2D data,
+# and column integration / cross-sections of 3D data.
+@njit(parallel=True)
+def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_data, w_func, x_pixels, y_pixels, x_min, x_max,
+                               y_min, y_max):
+    image = np.zeros((y_pixels, x_pixels))
+    pixwidthx = (x_max - x_min) / x_pixels
+    pixwidthy = (y_max - y_min) / y_pixels
+
+    term = (target * mass_data / (rho_data * h_data ** 2))
+
+    # iterate through the indexes of non-filtered particles
+    for i in prange(term.size):
+
+        # determine maximum and minimum pixels that this particle contributes to
+        ipixmin = int(np.rint((x_data[i] - 2 * h_data[i] - x_min) / pixwidthx))
+        jpixmin = int(np.rint((y_data[i] - 2 * h_data[i] - y_min) / pixwidthy))
+        ipixmax = int(np.rint((x_data[i] + 2 * h_data[i] - x_min) / pixwidthx))
+        jpixmax = int(np.rint((y_data[i] + 2 * h_data[i] - y_min) / pixwidthy))
+
+        if ipixmax < 0 or ipixmin > x_pixels or jpixmax < 0 or jpixmin > y_pixels:
+            continue
+        if ipixmin < 0:
+            ipixmin = 0
+        if ipixmax > x_pixels:
+            ipixmax = x_pixels
+        if jpixmin < 0:
+            jpixmin = 0
+        if jpixmax > y_pixels:
+            jpixmax = y_pixels
+
+        if False:
+            # precalculate differences in the x-direction (optimization)
+            dx2i = ((x_min + (np.arange(ipixmin, ipixmax) + 0.5) * pixwidthx - x_data[i]) ** 2) * (1 / (h_data[i] ** 2))
+
+            # determine differences in the y-direction
+            ypix = y_min + (np.arange(jpixmin, jpixmax) + 0.5) * pixwidthy
+            dy = ypix - y_data[i]
+            dy2 = dy * dy * (1 / (h_data[i] ** 2))
+
+            # calculate contributions at pixels i, j due to particle at x, y
+            q2 = dx2i + dy2.reshape(len(dy2), 1)
+
+            for jpix in prange(jpixmax - jpixmin):
+                for ipix in prange(ipixmax - ipixmin):
+                    if np.sqrt(q2[jpix][ipix]) > 2:
+                        continue
+                    wab = w_func(np.sqrt(q2[jpix][ipix]), 2)
+                    image[jpix + jpixmin, ipix + ipixmin] += term[i] * wab
+
+            continue
+
+        const = 10 / (7 * np.pi)
+        denom = 1 / np.abs(pixwidthx * pixwidthy) / const * h_data[i] ** 2
+
+        ypix = y_min + (jpixmin + 0.5) * pixwidthy
+        dy = ypix - y_data[i]
+
+        for ipix in prange(ipixmin, ipixmax):
+            xpix = x_min + (ipix + 0.5) * pixwidthx
+            dx = xpix - x_data[i]
+
+            r0 = 0.5 * pixwidthy - dy
+            d1 = 0.5 * pixwidthx + dx
+            d2 = 0.5 * pixwidthx - dx
+            pixint = pint(r0, d1, d2, 1 / h_data[i])
+            wab = pixint * denom
+
+            image[jpixmin, ipix] += term[i] * wab
+
+        xpix = x_min + (ipixmin + 0.5) * pixwidthx
+        dx = xpix - x_data[i]
+
+        for jpix in prange(jpixmin, jpixmax):
+            ypix = y_min + (jpix + 0.5) * pixwidthy
+            dy = ypix - y_data[i]
+
+            r0 = 0.5 * pixwidthx - dx
+            d1 = 0.5 * pixwidthy - dy
+            d2 = 0.5 * pixwidthy + dy
+            pixint = pint(r0, d1, d2, 1 / h_data[i])
+            wab = pixint * denom
+
+            image[jpix, ipixmin] += term[i] * wab
+
+        for jpix in prange(jpixmin, jpixmax):
+            ypix = y_min + (jpix + 0.5) * pixwidthy
+            dy = ypix - y_data[i]
+
+            for ipix in prange(ipixmin, ipixmax):
+                xpix = x_min + (ipix + 0.5) * pixwidthx
+                dx = xpix - x_data[i]
+
+                r0 = 0.5 * pixwidthy + dy
+                d1 = 0.5 * pixwidthx - dx
+                d2 = 0.5 * pixwidthx + dx
+                pixint = pint(r0, d1, d2, 1 / h_data[i])
+                wab = pixint * denom
+
+                image[jpix, ipix] += term[i] * wab
+
+                if jpix < jpixmax - 1:
+                    image[jpix + 1, ipix] -= term[i] * wab
+
+                r0 = 0.5 * pixwidthx + dx
+                d1 = 0.5 * pixwidthy + dy
+                d2 = 0.5 * pixwidthy - dy
+                pixint = pint(r0, d1, d2, 1 / h_data[i])
+                wab = pixint * denom
+
+                image[jpix, ipix] += term[i] * wab
+
+                if ipix < ipixmax - 1:
+                    image[jpix, ipix + 1] -= term[i] * wab
 
     return image
 
