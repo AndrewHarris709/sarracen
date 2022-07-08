@@ -880,7 +880,7 @@ def _fast_2d_cpu(target, z_slice, x_data, y_data, z_data, mass_data, rho_data, h
 
 # Underlying CPU numba-compiled code for interpolation to a 2D grid. Used in interpolation of 2D data,
 # and column integration / cross-sections of 3D data.
-@njit(parallel=True)
+#@njit(parallel=True)
 def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_data, w_func, x_pixels, y_pixels, x_min, x_max,
                                y_min, y_max):
     image = np.zeros((y_pixels, x_pixels))
@@ -909,7 +909,7 @@ def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_da
         if jpixmax > y_pixels:
             jpixmax = y_pixels
 
-        if False:
+        if False:  # don't do exact computation for pixels with large contribution areas
             # precalculate differences in the x-direction (optimization)
             dx2i = ((x_min + (np.arange(ipixmin, ipixmax) + 0.5) * pixwidthx - x_data[i]) ** 2) * (1 / (h_data[i] ** 2))
 
@@ -930,44 +930,49 @@ def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_da
 
             continue
 
+        # 2D kernel constant for the cubic spline kernel
         const = 10 / (7 * np.pi)
         denom = 1 / np.abs(pixwidthx * pixwidthy) / const * h_data[i] ** 2
 
-        ypix = y_min + (jpixmin + 0.5) * pixwidthy
-        dy = ypix - y_data[i]
-
-        for ipix in prange(ipixmin, ipixmax):
-            xpix = x_min + (ipix + 0.5) * pixwidthx
-            dx = xpix - x_data[i]
-
-            r0 = 0.5 * pixwidthy - dy
-            d1 = 0.5 * pixwidthx + dx
-            d2 = 0.5 * pixwidthx - dx
-            pixint = pint(r0, d1, d2, 1 / h_data[i])
-            wab = pixint * denom
-
-            image[jpixmin, ipix] += term[i] * wab
-
-        xpix = x_min + (ipixmin + 0.5) * pixwidthx
-        dx = xpix - x_data[i]
-
-        for jpix in prange(jpixmin, jpixmax):
-            ypix = y_min + (jpix + 0.5) * pixwidthy
+        if jpixmax >= jpixmin:
+            # Top boundaries of cells
+            ypix = y_min + (jpixmin + 0.5) * pixwidthy
             dy = ypix - y_data[i]
+            for ipix in prange(ipixmin, ipixmax):
+                xpix = x_min + (ipix + 0.5) * pixwidthx
+                dx = xpix - x_data[i]
 
-            r0 = 0.5 * pixwidthx - dx
-            d1 = 0.5 * pixwidthy - dy
-            d2 = 0.5 * pixwidthy + dy
-            pixint = pint(r0, d1, d2, 1 / h_data[i])
-            wab = pixint * denom
+                r0 = 0.5 * pixwidthy - dy
+                d1 = 0.5 * pixwidthx + dx
+                d2 = 0.5 * pixwidthx - dx
+                pixint = pint(r0, d1, d2, 1 / h_data[i])
+                wab = pixint * denom
 
-            image[jpix, ipixmin] += term[i] * wab
+                image[jpixmin, ipix] += term[i] * wab
 
+        # Left boundaries of cells
+        if ipixmax >= ipixmin:
+            xpix = x_min + (ipixmin + 0.5) * pixwidthx
+            dx = xpix - x_data[i]
+            for jpix in prange(jpixmin, jpixmax):
+                ypix = y_min + (jpix + 0.5) * pixwidthy
+                dy = ypix - y_data[i]
+
+                r0 = 0.5 * pixwidthx - dx
+                d1 = 0.5 * pixwidthy - dy
+                d2 = 0.5 * pixwidthy + dy
+                pixint = pint(r0, d1, d2, 1 / h_data[i])
+                wab = pixint * denom
+
+                image[jpix, ipixmin] += term[i] * wab
+
+        # Remaining Boundaries
         for jpix in prange(jpixmin, jpixmax):
             ypix = y_min + (jpix + 0.5) * pixwidthy
             dy = ypix - y_data[i]
 
             for ipix in prange(ipixmin, ipixmax):
+                # Bottom boundaries
                 xpix = x_min + (ipix + 0.5) * pixwidthx
                 dx = xpix - x_data[i]
 
