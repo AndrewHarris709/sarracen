@@ -122,7 +122,7 @@ def _set_pixels(x_pixels, y_pixels, x_min, x_max, y_min, y_max, default):
 def render_2d(data: 'SarracenDataFrame', target: str, x: str = None, y: str = None, kernel: BaseKernel = None,
               x_pixels: int = None, y_pixels: int = None, x_min: float = None, x_max: float = None, y_min: float = None,
               y_max: float = None, cmap: Union[str, Colormap] = 'RdBu', cbar: bool = True, cbar_kws: dict = {},
-              cbar_ax: Axes = None, ax: Axes = None, backend: str = None, **kwargs) -> Axes:
+              cbar_ax: Axes = None, ax: Axes = None, backend: str = None, exact: bool = None, **kwargs) -> Axes:
     """ Render 2D particle data to a 2D grid, using SPH rendering of a target variable.
 
     Render the data within a SarracenDataFrame to a 2D matplotlib object, by rendering the values
@@ -174,7 +174,7 @@ def render_2d(data: 'SarracenDataFrame', target: str, x: str = None, y: str = No
         If `target`, `x`, `y`, mass, density, or smoothing length columns do not
         exist in `data`.
     """
-    image = interpolate_2d(data, target, x, y, kernel, x_pixels, y_pixels, x_min, x_max, y_min, y_max, backend)
+    image = interpolate_2d(data, target, x, y, kernel, x_pixels, y_pixels, x_min, x_max, y_min, y_max, backend, exact)
 
     if ax is None:
         ax = plt.gca()

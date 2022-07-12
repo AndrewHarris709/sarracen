@@ -273,7 +273,7 @@ def _rotate_xyz(data, x, y, z, rotation, origin):
 
 def interpolate_2d(data: 'SarracenDataFrame', target: str, x: str = None, y: str = None, kernel: BaseKernel = None,
                    x_pixels: int = None, y_pixels: int = None,  x_min: float = None, x_max: float = None,
-                   y_min: float = None, y_max: float = None, backend: str = None) -> np.ndarray:
+                   y_min: float = None, y_max: float = None, backend: str = None, exact: bool = False) -> np.ndarray:
     """ Interpolate particle data across two directional axes to a 2D grid of pixels.
 
     Interpolate the data within a SarracenDataFrame to a 2D grid, by interpolating the values
@@ -326,9 +326,14 @@ def interpolate_2d(data: 'SarracenDataFrame', target: str, x: str = None, y: str
     backend = backend if backend is not None else data.backend
     _check_dimension(data, 2)
 
-    return _fast_2d_interpolate_exact(data[target].to_numpy(), data[x].to_numpy(), data[y].to_numpy(),
-                                      data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(),
-                                      CubicSplineKernel.w, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+    if exact:
+        return _fast_2d_interpolate_exact(data[target].to_numpy(), data[x].to_numpy(), data[y].to_numpy(),
+                                          data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(),
+                                          CubicSplineKernel.w, x_pixels, y_pixels, x_min, x_max, y_min, y_max)
+    else:
+        return _fast_2d(data[target].to_numpy(), 0, data[x].to_numpy(), data[y].to_numpy(), np.zeros(len(data)),
+                        data['m'].to_numpy(), data['rho'].to_numpy(), data['h'].to_numpy(), kernel.w,
+                        kernel.get_radius(), x_pixels, y_pixels, x_min, x_max, y_min, y_max, 2, backend)
 
 
 def interpolate_2d_vec(data: 'SarracenDataFrame', target_x: str, target_y: str, x: str = None, y: str = None,
@@ -887,6 +892,9 @@ def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_da
     pixwidthx = (x_max - x_min) / x_pixels
     pixwidthy = (y_max - y_min) / y_pixels
 
+    # 2D kernel constant for the cubic spline kernel
+    const = 10 / (7 * np.pi)
+
     term = (target * mass_data / (rho_data * h_data ** 2))
 
     for thread in prange(get_num_threads()):
@@ -903,7 +911,7 @@ def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_da
             ipixmax = int(np.rint((x_data[i] + 2 * h_data[i] - x_min) / pixwidthx))
             jpixmax = int(np.rint((y_data[i] + 2 * h_data[i] - y_min) / pixwidthy))
 
-            if ipixmax < 0 or ipixmin > x_pixels or jpixmax < 0 or jpixmin > y_pixels:
+            if ipixmax < 0 or ipixmin >= x_pixels or jpixmax < 0 or jpixmin >= y_pixels:
                 continue
             if ipixmin < 0:
                 ipixmin = 0
@@ -914,53 +922,91 @@ def _fast_2d_interpolate_exact(target, x_data, y_data, mass_data, rho_data, h_da
             if jpixmax > y_pixels:
                 jpixmax = y_pixels
 
-            # 2D kernel constant for the cubic spline kernel
-            const = 10 / (7 * np.pi)
-            denom = 1 / np.abs(pixwidthx * pixwidthy) / const * h_data[i] ** 2
+            if (ipixmax - ipixmin < 5) or True:
+                denom = 1 / np.abs(pixwidthx * pixwidthy) / const * h_data[i] ** 2
 
-            for jpix in prange(jpixmin, jpixmax):
-                ypix = y_min + (jpix + 0.5) * pixwidthy
-                dy = ypix - y_data[i]
+                if jpixmax >= jpixmin:
+                    ypix = y_min + (jpixmin + 0.5) * pixwidthy
+                    dy = ypix - y_data[i]
 
-                for ipix in prange(ipixmin, ipixmax):
-                    xpix = x_min + (ipix + 0.5) * pixwidthx
+                    for ipix in range(ipixmin, ipixmax):
+                        xpix = x_min + (ipix + 0.5) * pixwidthx
+                        dx = xpix - x_data[i]
+
+                        # Top Boundary
+                        r0 = 0.5 * pixwidthy - dy
+                        d1 = 0.5 * pixwidthx + dx
+                        d2 = 0.5 * pixwidthx - dx
+                        pixint = pint(r0, d1, d2, 1 / h_data[i])
+                        wab = pixint * denom
+
+                        output_local[thread, jpixmin, ipix] += term[i] * wab
+
+                if ipixmax >= ipixmin:
+                    xpix = x_min + (ipixmin + 0.5) * pixwidthx
                     dx = xpix - x_data[i]
 
-                    # Top Boundary
-                    r0 = 0.5 * pixwidthy - dy
-                    d1 = 0.5 * pixwidthx + dx
-                    d2 = 0.5 * pixwidthx - dx
-                    pixint = pint(r0, d1, d2, 1 / h_data[i])
-                    wab = pixint * denom
+                    for jpix in range(jpixmin, jpixmax):
+                        ypix = y_min + (jpix + 0.5) * pixwidthy
+                        dy = ypix - y_data[i]
 
-                    output_local[thread, jpix, ipix] += term[i] * wab
+                        # Left Boundary
+                        r0 = 0.5 * pixwidthx - dx
+                        d1 = 0.5 * pixwidthy - dy
+                        d2 = 0.5 * pixwidthy + dy
+                        pixint = pint(r0, d1, d2, 1 / h_data[i])
+                        wab = pixint * denom
 
-                    # Left Boundary
-                    r0 = 0.5 * pixwidthx - dx
-                    d1 = 0.5 * pixwidthy - dy
-                    d2 = 0.5 * pixwidthy + dy
-                    pixint = pint(r0, d1, d2, 1 / h_data[i])
-                    wab = pixint * denom
+                        output_local[thread, jpix, ipixmin] += term[i] * wab
 
-                    output_local[thread, jpix, ipix] += term[i] * wab
+                for jpix in range(jpixmin, jpixmax):
+                    ypix = y_min + (jpix + 0.5) * pixwidthy
+                    dy = ypix - y_data[i]
 
-                    # Bottom boundaries
-                    r0 = 0.5 * pixwidthy + dy
-                    d1 = 0.5 * pixwidthx - dx
-                    d2 = 0.5 * pixwidthx + dx
-                    pixint = pint(r0, d1, d2, 1 / h_data[i])
-                    wab = pixint * denom
+                    for ipix in range(ipixmin, ipixmax):
+                        xpix = x_min + (ipix + 0.5) * pixwidthx
+                        dx = xpix - x_data[i]
 
-                    output_local[thread, jpix, ipix] += term[i] * wab
+                        # Bottom boundaries
+                        r0 = 0.5 * pixwidthy + dy
+                        d1 = 0.5 * pixwidthx - dx
+                        d2 = 0.5 * pixwidthx + dx
+                        pixint = pint(r0, d1, d2, 1 / h_data[i])
+                        wab = pixint * denom
 
-                    # Right Boundaries
-                    r0 = 0.5 * pixwidthx + dx
-                    d1 = 0.5 * pixwidthy + dy
-                    d2 = 0.5 * pixwidthy - dy
-                    pixint = pint(r0, d1, d2, 1 / h_data[i])
-                    wab = pixint * denom
+                        output_local[thread, jpix, ipix] += term[i] * wab
+                        if jpix < jpixmax - 1:
+                            output_local[thread, jpix + 1, ipix] -= term[i] * wab
 
-                    output_local[thread, jpix, ipix] += term[i] * wab
+                        # Right Boundaries
+                        r0 = 0.5 * pixwidthx + dx
+                        d1 = 0.5 * pixwidthy + dy
+                        d2 = 0.5 * pixwidthy - dy
+                        pixint = pint(r0, d1, d2, 1 / h_data[i])
+                        wab = pixint * denom
+
+                        output_local[thread, jpix, ipix] += term[i] * wab
+                        if ipix < ipixmax - 1:
+                            output_local[thread, jpix, ipix + 1] -= term[i] * wab
+
+            else:
+                # precalculate differences in the x-direction (optimization)
+                dx2i = ((x_min + (np.arange(ipixmin, ipixmax) + 0.5) * pixwidthx - x_data[i]) ** 2) * (1 / (h_data[i] ** 2))
+
+                # determine differences in the y-direction
+                ypix = y_min + (np.arange(jpixmin, jpixmax) + 0.5) * pixwidthy
+                dy = ypix - y_data[i]
+                dy2 = dy * dy * (1 / (h_data[i] ** 2))
+
+                # calculate contributions at pixels i, j due to particle at x, y
+                q2 = dx2i + dy2.reshape(len(dy2), 1)
+
+                for jpix in prange(jpixmax - jpixmin):
+                    for ipix in prange(ipixmax - ipixmin):
+                        if np.sqrt(q2[jpix][ipix]) > 2:
+                            continue
+                        wab = w_func(np.sqrt(q2[jpix][ipix]), 2)
+                        output_local[thread, jpix + jpixmin, ipix + ipixmin] += term[i] * wab
 
     output = np.zeros((y_pixels, x_pixels))
 
