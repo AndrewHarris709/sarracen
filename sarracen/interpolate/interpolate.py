@@ -208,9 +208,9 @@ def _rotate_data(data, x, y, z, rotation, origin):
     x_data, y_data, z_data: ndarray
         The rotated x, y, and z directional data.
     """
-    x_data = data[x].to_numpy()
-    y_data = data[y].to_numpy()
-    z_data = data[z].to_numpy()
+    x_data = data[x].values.quantity.magnitude
+    y_data = data[y].values.quantity.magnitude
+    z_data = data[z].values.quantity.magnitude
     if rotation is not None:
         if not isinstance(rotation, Rotation):
             rotation = Rotation.from_euler('zyx', rotation, degrees=True)
@@ -534,9 +534,9 @@ def interpolate_3d(data: 'SarracenDataFrame', target: str, x: str = None, y: str
     weight_function = kernel.get_column_kernel_func(integral_samples)
 
     return get_backend(backend). \
-        interpolate_3d_projection(data[target].to_numpy(), x_data, y_data, z_data, data['m'].to_numpy(),
-                                  data['rho'].to_numpy(), data['h'].to_numpy(), weight_function, kernel.get_radius(),
-                                  x_pixels, y_pixels, x_min, x_max, y_min, y_max, exact)
+        interpolate_3d_projection(data[target].values.quantity.magnitude, x_data, y_data, z_data, data['m'].values.quantity.magnitude,
+                                  data['rho'].values.quantity.magnitude, data['h'].values.quantity.magnitude, weight_function, kernel.get_radius(),
+                                  x_pixels, y_pixels, x_min.magnitude, x_max.magnitude, y_min.magnitude, y_max.magnitude, exact)
 
 
 def interpolate_3d_vec(data: 'SarracenDataFrame', target_x: str, target_y: str, target_z: str, x: str = None,

@@ -577,7 +577,7 @@ def render_3d(data: 'SarracenDataFrame', target: str, x: str = None, y: str = No
     x_min, x_max, y_min, y_max = _default_bounds(data, x, y, x_min, x_max, y_min, y_max)
 
     kwargs.setdefault("origin", 'lower')
-    kwargs.setdefault("extent", [x_min, x_max, y_min, y_max])
+    kwargs.setdefault("extent", [x_min.magnitude, x_max.magnitude, y_min.magnitude, y_max.magnitude])
     if log_scale:
         kwargs.setdefault("norm", LogNorm(clip=True))
 

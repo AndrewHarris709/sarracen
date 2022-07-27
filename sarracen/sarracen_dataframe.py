@@ -1,5 +1,8 @@
 from typing import Union, Callable, Tuple
 
+import pandas as pd
+import pint
+import pint_pandas
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from pandas import DataFrame, Series
@@ -148,6 +151,28 @@ class SarracenDataFrame(DataFrame):
 
         self['rho'] = (self.params['hfact'] / self['h']) ** (self.get_dim()) * self['m']
         self._rhocol = 'rho'
+
+    def to_units(self):
+        dist_conv = self.params['udist']
+        time_conv = self.params['utime']
+        mass_conv = self.params['umass']
+        mfield_conv = self.params['umagfd']
+        density_conv = mass_conv / (dist_conv ** 3)
+        speed_conv = dist_conv / time_conv
+
+        self[self._xcol] = pd.Series(self[self._xcol] * dist_conv, dtype="pint[cm]")
+        self[self._ycol] = pd.Series(self[self._ycol] * dist_conv, dtype="pint[cm]")
+        if self._zcol:
+            self[self._zcol] = pd.Series(self[self._zcol] * dist_conv, dtype="pint[cm]")
+
+        self[self._hcol] = pd.Series(self[self._hcol] * dist_conv, dtype="pint[cm]")
+
+        self[self._rhocol] = pd.Series(self[self._rhocol] * density_conv, dtype="pint[g/cm**3]")
+        self[self._mcol] = pd.Series(self[self._mcol] * mass_conv, dtype="pint[g]")
+
+        self['vx'] = pd.Series(self['vx'] * speed_conv, dtype="pint[cm/s]")
+        self['vy'] = pd.Series(self['vy'] * speed_conv, dtype="pint[cm/s]")
+        self['vz'] = pd.Series(self['vz'] * speed_conv, dtype="pint[cm/s]")
 
     @_copy_doc(render_2d)
     def render_2d(self, target: str, x: str = None, y: str = None, kernel: BaseKernel = None, x_pixels: int = None,
