@@ -30,7 +30,8 @@ class SarracenDataFrame(DataFrame):
     --------
     readers : Functions for creating SarracenDataFrame objects from exported SPH data.
     """
-    _metadata = ['_params', '_units', '_xcol', '_ycol', '_zcol', '_hcol', '_mcol', '_rhocol', '_kernel']
+    _metadata = ['_params', '_units', '_xcol', '_ycol', '_zcol', '_hcol', '_mcol', '_rhocol', '_kernel', '_backend',
+                 '_in_units']
 
     def __init__(self, data=None, params=None, *args, **kwargs):
         """ Create a new `SarracenDataFrame`, and automatically detect important columns.
@@ -62,6 +63,8 @@ class SarracenDataFrame(DataFrame):
 
         self._kernel = CubicSplineKernel()
         self._backend = 'cpu'
+
+        self._in_units = False
 
     @property
     def _constructor(self):
@@ -148,6 +151,68 @@ class SarracenDataFrame(DataFrame):
 
         self['rho'] = (self.params['hfact'] / self['h']) ** (self.get_dim()) * self['m']
         self._rhocol = 'rho'
+
+    def to_units(self):
+        if not {'udist', 'utime', 'umass'}.issubset(self.params):
+            raise KeyError('Units do not exist for this SarracenDataFrame.')
+        if self.get_dim() <= 1 or self.get_dim() >= 4:
+            raise TypeError(f'Dataset is {self.get_dim()}-dimensional, must be either 2 or 3 dimensional.')
+        if self._in_units:
+            raise RuntimeError('This dataset is already in units.')
+
+        self[self._xcol] = self[self._xcol] * self.params['udist']
+        self[self._ycol] = self[self._ycol] * self.params['udist']
+        if self.get_dim() == 3:
+            self[self._zcol] = self[self._zcol] * self.params['udist']
+
+        if self._rhocol is not None:
+            self[self._rhocol] = self[self._rhocol] * self.params['umass'] / self.params['udist'] ** self.get_dim()
+        if self._mcol is not None:
+            self[self._mcol] = self[self._mcol] * self.params['umass']
+        if 'mass' in self.params:
+            self.params['mass'] = self.params['mass'] * self.params['umass']
+
+        self[self._hcol] = self[self._hcol] * self.params['udist']
+
+        if 'vx' in self:
+            self['vx'] = self['vx'] * self.params['udist'] / self.params['utime']
+        if 'vy' in self:
+            self['vy'] = self['vy'] * self.params['udist'] / self.params['utime']
+        if 'vz' in self:
+            self['vz'] = self['vz'] * self.params['udist'] / self.params['utime']
+
+        self._in_units = True
+
+    def from_units(self):
+        if not {'udist', 'utime', 'umass'}.issubset(self.params):
+            raise KeyError('Units do not exist for this SarracenDataFrame.')
+        if self.get_dim() <= 1 or self.get_dim() >= 4:
+            raise TypeError(f'Dataset is {self.get_dim()}-dimensional, must be either 2 or 3 dimensional.')
+        if not self._in_units:
+            raise RuntimeError('This dataset is not in units.')
+
+        self[self._xcol] = self[self._xcol] / self.params['udist']
+        self[self._ycol] = self[self._ycol] / self.params['udist']
+        if self.get_dim() == 3:
+            self[self._zcol] = self[self._zcol] / self.params['udist']
+
+        if self._rhocol is not None:
+            self[self._rhocol] = self[self._rhocol] / self.params['umass'] * self.params['udist'] ** self.get_dim()
+        if self._mcol is not None:
+            self[self._mcol] = self[self._mcol] / self.params['umass']
+        if 'mass' in self.params:
+            self.params['mass'] = self.params['mass'] / self.params['umass']
+
+        self[self._hcol] = self[self._hcol] / self.params['udist']
+
+        if 'vx' in self:
+            self['vx'] = self['vx'] / self.params['udist'] * self.params['utime']
+        if 'vy' in self:
+            self['vy'] = self['vy'] / self.params['udist'] * self.params['utime']
+        if 'vz' in self:
+            self['vz'] = self['vz'] / self.params['udist'] * self.params['utime']
+
+        self._in_units = False
 
     @_copy_doc(render_2d)
     def render_2d(self, target: str, x: str = None, y: str = None, kernel: BaseKernel = None, x_pixels: int = None,
